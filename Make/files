@@ -1,2 +1,2 @@
 fixedMapFvPatchFields.C
-LIB = $(FOAM_USER_LIBBIN)/libmappedConsistant
+LIB = $(FOAM_USER_LIBBIN)/libfixedMapped

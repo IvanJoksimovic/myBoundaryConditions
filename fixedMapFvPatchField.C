@@ -39,8 +39,7 @@ Foam::fixedMapFvPatchField<Type>::fixedMapFvPatchField
 )
 :
     fixedValueFvPatchField<Type>(p, iF),
-    mapFrom_(),
-    fieldName_(),
+    sourcePatch_(),
     offset_(),
     globalPatchInd_()
 {}
@@ -55,24 +54,29 @@ Foam::fixedMapFvPatchField<Type>::fixedMapFvPatchField
 )
 :
     fixedValueFvPatchField<Type>(p, iF, dict),
-    mapFrom_(dict.get<word>("mapFrom")),
-    fieldName_(dict.get<word>("fieldName")),
+    sourcePatch_(dict.get<word>("sourcePatch")),
     offset_(dict.get<vector>("offset")),
     globalPatchInd_(1)
 {
+
+
     this->patchType() = dict.getOrDefault<word>("patchType", word::null);
 
-    const label mapFromPatchID = this->patch().patch().boundaryMesh().findPatchID(mapFrom_);
+    Info << "CREATING A PATCH MAP ON THE PATCH: " << this->patch().patch().name()<< endl;
 
-    const polyPatch& mapFromPatch =  this->patch().patch().boundaryMesh()[mapFromPatchID]; 
+    const label sourcePatchID = this->patch().patch().boundaryMesh().findPatchID(sourcePatch_);
 
-    const vectorField& mpfC = mapFromPatch.faceCentres();
+    const polyPatch& sourcePatch =  this->patch().patch().boundaryMesh()[sourcePatchID];
+
+    const vectorField& mpfC = sourcePatch.faceCentres();
 
     const vectorField& thisPatchC =this->patch().patch().faceCentres();
+    Info << "SIZE OF THE PATCH: " << thisPatchC.size() << endl;
+    Info << "SIZE OF THE PATCH: " << mpfC.size() << endl;
 
     if(Pstream::parRun())
     {
-    	// Send field to master processor 
+    	// Send field to master processor
     	if(!Pstream::master)
     	{
 
@@ -81,16 +85,18 @@ Foam::fixedMapFvPatchField<Type>::fixedMapFvPatchField
     	{
 
     	}
-    	
-    	
+
+
     }
     else
     {
-    	// Search in serial 
+    	// Search in serial
 
-    	Info << "Creating a patchMap" << endl;
+
 
     	const vectorField mpfCTransformed(mpfC - offset_);
+
+
 
     	globalPatchInd_.resize(thisPatchC.size());
 
@@ -98,28 +104,28 @@ Foam::fixedMapFvPatchField<Type>::fixedMapFvPatchField
     	{
     		scalar minDist = 1e20;
     		label minInd = -1;
-  		
+
     		forAll(mpfCTransformed,j)
     		{
     			scalar dist = mag(thisPatchC[i] - mpfCTransformed[j]);
-    			
+
     			if(dist<minDist)
     			{
     				minDist = dist;
     				minInd = j;
     			}
     		}
-    		
+
     		globalPatchInd_[i] = minInd;
     	}
 
-    	/*
+
 
     	forAll(thisPatchC,i)
     	{
-    		Info << "thisPatchC = " << thisPatchC[i] <<"  , mapFromPatchC = " << mpfC[globalPatchInd_[i]] << endl;
+    		Info << "thisPatchC = " << thisPatchC[i] <<"  , sourcePatchC = " << mpfC[globalPatchInd_[i]] << endl;
     	}
-    	*/
+
     }
 
 }
@@ -135,8 +141,7 @@ Foam::fixedMapFvPatchField<Type>::fixedMapFvPatchField
 )
 :
     fixedValueFvPatchField<Type>(ptf, p, iF, mapper),
-    mapFrom_(ptf.mapFrom_),
-    fieldName_(ptf.fieldName_),
+    sourcePatch_(ptf.sourcePatch_),
     offset_(ptf.offset_),
     globalPatchInd_(1)
 {}
@@ -149,8 +154,7 @@ Foam::fixedMapFvPatchField<Type>::fixedMapFvPatchField
 )
 :
     fixedValueFvPatchField<Type>(ptf),
-    mapFrom_(ptf.mapFrom_),
-    fieldName_(ptf.fieldName_),
+    sourcePatch_(ptf.sourcePatch_),
     offset_(ptf.offset_),
     globalPatchInd_(1)
 {}
@@ -164,8 +168,7 @@ Foam::fixedMapFvPatchField<Type>::fixedMapFvPatchField
 )
 :
     fixedValueFvPatchField<Type>(ptf, iF),
-    mapFrom_(ptf.mapFrom_),
-    fieldName_(ptf.fieldName_),
+    sourcePatch_(ptf.sourcePatch_),
     offset_(ptf.offset_),
     globalPatchInd_(1)
 {}
@@ -181,43 +184,49 @@ void Foam::fixedMapFvPatchField<Type>::updateCoeffs()
         return;
     }
 
-    //const polyPatch& thisPatch = this->patch().patch(); //hshs(); //.boundaryMesh().patches(); //.mesh().boundary().patches();
+    const GeometricField<Type, fvPatchField, volMesh>& f
+    (
+        dynamic_cast<const GeometricField<Type, fvPatchField, volMesh>&>
+        (
+            this->internalField()
+        )
+    );
 
-    wordList mapFroms = this->patch().patch().boundaryMesh().names();
+    const fvPatch& p = this->patch();
+    const label sourcePatchID = p.patch().boundaryMesh().findPatchID(sourcePatch_);
 
-
-
-
-    if(Pstream::parRun())
+    if (sourcePatchID < 0)
     {
-    	//std::cout<<"\n UPDATING on processor:" << Pstream::myProcNo() << std::endl;
-    	forAll(mapFroms,i)
-    	{
-    		//std::cout << "\n On processor " << Pstream::myProcNo() <<" , mapFrom[ " << i <<"]: " << mapFroms[i] << "\n"<<endl;
-    		//std::cout << "mapFrom_ = " << mapFrom_ << endl;
-    	}
-
-
-    	
-    	//PtrList<boundaryPatch> patches = this->patch().boundaryMesh().patches();
+        FatalErrorInFunction
+            << "Unable to find patch " << sourcePatch_
+            << abort(FatalError);
     }
-    
-    Info << "UPDATING MAPPED FIELD!!!!" << endl;
 
-    const fvPatch& pt = this->patch();
+    //const fvPatch& sourcePatch = p.boundaryMesh()[sourcePatchID];
 
-    const fvPatchField<Type> & mapField = pt.lookupPatchField<GeometricField<Type, fvPatchField, volMesh>, Type>(fieldName_);
+    const fvPatchField<Type>& sourcePatchField = f.boundaryField()[sourcePatchID];
 
-    Field<Type> newValues(this->patch().patch().size());
+    Info << "Average of sourcePatchField is " <<  gAverage(sourcePatchField ) << endl;
+
+    auto tnewValues = tmp<Field<Type>>::New();
+    auto& newValues = tnewValues.ref();
+
+    newValues.setSize(sourcePatchField.size());
 
     forAll(newValues,i)
     {
-    	newValues[i] = mapField[globalPatchInd_[i]];
+      newValues[i] = sourcePatchField[globalPatchInd_[i]];
     }
 
-    this->operator==(newValues);
-     
+    Info << "Average of newValues is " <<  gAverage(newValues) << endl;
+
+
+    this->operator==(tnewValues);
+
     fixedValueFvPatchField<Type>::updateCoeffs();
+
+    Info << "GOTOVO!!!!" << endl;
+
 }
 
 
@@ -225,8 +234,7 @@ template<class Type>
 void Foam::fixedMapFvPatchField<Type>::write(Ostream& os) const
 {
     fvPatchField<Type>::write(os);
-    os.writeEntry("mapFrom", mapFrom_);
-    os.writeEntry("fieldName", fieldName_);
+    os.writeEntry("sourcePatch", sourcePatch_);
     os.writeEntry("offset", offset_);
     this->writeEntry("value", os);
 }

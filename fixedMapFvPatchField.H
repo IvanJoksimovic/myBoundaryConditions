@@ -83,8 +83,7 @@ class fixedMapFvPatchField
         //- MeanValue value the field is adjusted to maintain
         //autoPtr<Function1<Type>> meanValue_;
         // - Name of the patch to map from!
-        word mapFrom_;
-        word fieldName_;
+        word sourcePatch_;
         vector offset_;
         labelList globalPatchInd_;
 
