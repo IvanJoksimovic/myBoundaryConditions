@@ -42,7 +42,7 @@ Usage
 
     Example of the boundary condition specification:
     \verbatim
-    <patchName>
+    <mapFrom>
     {
         type            fixedMap;
         meanValue       1.0;
@@ -81,8 +81,12 @@ class fixedMapFvPatchField
     // Private data
 
         //- MeanValue value the field is adjusted to maintain
-        autoPtr<Function1<Type>> meanValue_;
-
+        //autoPtr<Function1<Type>> meanValue_;
+        // - Name of the patch to map from!
+        word mapFrom_;
+        word fieldName_;
+        vector offset_;
+        labelList globalPatchInd_;
 
 public:
 

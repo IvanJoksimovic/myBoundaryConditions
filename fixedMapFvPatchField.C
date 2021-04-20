@@ -39,7 +39,10 @@ Foam::fixedMapFvPatchField<Type>::fixedMapFvPatchField
 )
 :
     fixedValueFvPatchField<Type>(p, iF),
-    meanValue_()
+    mapFrom_(),
+    fieldName_(),
+    offset_(),
+    globalPatchInd_()
 {}
 
 
@@ -52,9 +55,73 @@ Foam::fixedMapFvPatchField<Type>::fixedMapFvPatchField
 )
 :
     fixedValueFvPatchField<Type>(p, iF, dict),
-    meanValue_(Function1<Type>::New("meanValue", dict))
+    mapFrom_(dict.get<word>("mapFrom")),
+    fieldName_(dict.get<word>("fieldName")),
+    offset_(dict.get<vector>("offset")),
+    globalPatchInd_(1)
 {
     this->patchType() = dict.getOrDefault<word>("patchType", word::null);
+
+    const label mapFromPatchID = this->patch().patch().boundaryMesh().findPatchID(mapFrom_);
+
+    const polyPatch& mapFromPatch =  this->patch().patch().boundaryMesh()[mapFromPatchID]; 
+
+    const vectorField& mpfC = mapFromPatch.faceCentres();
+
+    const vectorField& thisPatchC =this->patch().patch().faceCentres();
+
+    if(Pstream::parRun())
+    {
+    	// Send field to master processor 
+    	if(!Pstream::master)
+    	{
+
+    	}
+    	else
+    	{
+
+    	}
+    	
+    	
+    }
+    else
+    {
+    	// Search in serial 
+
+    	Info << "Creating a patchMap" << endl;
+
+    	const vectorField mpfCTransformed(mpfC - offset_);
+
+    	globalPatchInd_.resize(thisPatchC.size());
+
+    	forAll(thisPatchC,i)
+    	{
+    		scalar minDist = 1e20;
+    		label minInd = -1;
+  		
+    		forAll(mpfCTransformed,j)
+    		{
+    			scalar dist = mag(thisPatchC[i] - mpfCTransformed[j]);
+    			
+    			if(dist<minDist)
+    			{
+    				minDist = dist;
+    				minInd = j;
+    			}
+    		}
+    		
+    		globalPatchInd_[i] = minInd;
+    	}
+
+    	/*
+
+    	forAll(thisPatchC,i)
+    	{
+    		Info << "thisPatchC = " << thisPatchC[i] <<"  , mapFromPatchC = " << mpfC[globalPatchInd_[i]] << endl;
+    	}
+    	*/
+    }
+
 }
 
 
@@ -68,7 +135,10 @@ Foam::fixedMapFvPatchField<Type>::fixedMapFvPatchField
 )
 :
     fixedValueFvPatchField<Type>(ptf, p, iF, mapper),
-    meanValue_(ptf.meanValue_.clone())
+    mapFrom_(ptf.mapFrom_),
+    fieldName_(ptf.fieldName_),
+    offset_(ptf.offset_),
+    globalPatchInd_(1)
 {}
 
 
@@ -79,7 +149,10 @@ Foam::fixedMapFvPatchField<Type>::fixedMapFvPatchField
 )
 :
     fixedValueFvPatchField<Type>(ptf),
-    meanValue_(ptf.meanValue_.clone())
+    mapFrom_(ptf.mapFrom_),
+    fieldName_(ptf.fieldName_),
+    offset_(ptf.offset_),
+    globalPatchInd_(1)
 {}
 
 
@@ -91,7 +164,10 @@ Foam::fixedMapFvPatchField<Type>::fixedMapFvPatchField
 )
 :
     fixedValueFvPatchField<Type>(ptf, iF),
-    meanValue_(ptf.meanValue_.clone())
+    mapFrom_(ptf.mapFrom_),
+    fieldName_(ptf.fieldName_),
+    offset_(ptf.offset_),
+    globalPatchInd_(1)
 {}
 
 
@@ -107,7 +183,7 @@ void Foam::fixedMapFvPatchField<Type>::updateCoeffs()
 
     //const polyPatch& thisPatch = this->patch().patch(); //hshs(); //.boundaryMesh().patches(); //.mesh().boundary().patches();
 
-    wordList patchNames = this->patch().patch().boundaryMesh().names();
+    wordList mapFroms = this->patch().patch().boundaryMesh().names();
 
 
 
@@ -115,36 +191,32 @@ void Foam::fixedMapFvPatchField<Type>::updateCoeffs()
     if(Pstream::parRun())
     {
     	//std::cout<<"\n UPDATING on processor:" << Pstream::myProcNo() << std::endl;
-    	forAll(patchNames,i)
+    	forAll(mapFroms,i)
     	{
-    		std::cout << "\n On processor " << Pstream::myProcNo() <<" , patchName[ " << i <<"]: " << patchNames[i] << "\n"<<endl;
+    		//std::cout << "\n On processor " << Pstream::myProcNo() <<" , mapFrom[ " << i <<"]: " << mapFroms[i] << "\n"<<endl;
+    		//std::cout << "mapFrom_ = " << mapFrom_ << endl;
     	}
 
 
     	
     	//PtrList<boundaryPatch> patches = this->patch().boundaryMesh().patches();
     }
+    
+    Info << "UPDATING MAPPED FIELD!!!!" << endl;
 
-    const scalar t = this->db().time().timeOutputValue();
-    Type meanValue = meanValue_->value(t);
+    const fvPatch& pt = this->patch();
 
-    Field<Type> newValues(this->patchInternalField());
+    const fvPatchField<Type> & mapField = pt.lookupPatchField<GeometricField<Type, fvPatchField, volMesh>, Type>(fieldName_);
 
-    Type meanValuePsi =
-        gSum(this->patch().magSf()*newValues)
-       /gSum(this->patch().magSf());
+    Field<Type> newValues(this->patch().patch().size());
 
-    if (mag(meanValue) > SMALL && mag(meanValuePsi)/mag(meanValue) > 0.5)
+    forAll(newValues,i)
     {
-        newValues *= mag(meanValue)/mag(meanValuePsi);
-    }
-    else
-    {
-        newValues += (meanValue - meanValuePsi);
+    	newValues[i] = mapField[globalPatchInd_[i]];
     }
 
     this->operator==(newValues);
-
+     
     fixedValueFvPatchField<Type>::updateCoeffs();
 }
 
@@ -153,7 +225,9 @@ template<class Type>
 void Foam::fixedMapFvPatchField<Type>::write(Ostream& os) const
 {
     fvPatchField<Type>::write(os);
-    meanValue_->writeData(os);
+    os.writeEntry("mapFrom", mapFrom_);
+    os.writeEntry("fieldName", fieldName_);
+    os.writeEntry("offset", offset_);
     this->writeEntry("value", os);
 }
 
